@@ -66,6 +66,7 @@ def circuit_to_qir(
     circuit: QubitCircuit,
     format: Union[Literal[QirFormat.BITCODE], Literal["bitcode"]],
     module_name: str,
+    record_output: bool = True,
 ) -> bytes:
     ...
 
@@ -75,6 +76,7 @@ def circuit_to_qir(
     circuit: QubitCircuit,
     format: Union[Literal[QirFormat.TEXT], Literal["text"]],
     module_name: str,
+    record_output: bool = True,
 ) -> str:
     ...
 
@@ -84,11 +86,12 @@ def circuit_to_qir(
     circuit: QubitCircuit,
     format: Union[Literal[QirFormat.MODULE], Literal["module"]],
     module_name: str,
+    record_output: bool = True,
 ) -> pqp.QirModule:
     ...
 
 
-def circuit_to_qir(circuit, format, module_name="qutip_circuit"):
+def circuit_to_qir(circuit, format, module_name="qutip_circuit", record_output=True):
     """Converts a qubit circuit to its representation in QIR.
 
     Given a circuit acting on qubits, generates a representation of that
@@ -106,6 +109,10 @@ def circuit_to_qir(circuit, format, module_name="qutip_circuit"):
         further before generating QIR.
     module_name
         The name of the module to be emitted.
+    record_output
+        If set, all measurement results are implicitly recorded
+        at the end of the QIR program. This is useful if the QIR
+        program being omitted is the main entry point.
 
     Returns
     -------
@@ -212,6 +219,30 @@ def circuit_to_qir(circuit, format, module_name="qutip_circuit"):
                 + "profile and may require a custom declaration."
             )
 
+    # Possibly add result recording.
+    if record_output and circuit.num_cbits:
+        # Define QIR runtime functions needed for result
+        # recording.
+        array_start_record_output = module.add_external_function(
+            "__quantum__rt__array_start_record_output",
+            pqg.types.Function([], pqg.types.VOID)
+        )
+        array_end_record_output = module.add_external_function(
+            "__quantum__rt__array_end_record_output",
+            pqg.types.Function([], pqg.types.VOID)
+        )
+        result_record_output = module.add_external_function(
+            "__quantum__rt__result_record_output",
+            pqg.types.Function([pqg.types.RESULT], pqg.types.VOID)
+        )
+
+        module.builder.call(array_start_record_output, [])
+        for idx_cbit in range(circuit.num_cbits):
+            result_ref = module.results[idx_cbit]
+            module.builder.call(result_record_output, [result_ref])
+        module.builder.call(array_end_record_output, [])
+
+    # Finally, write the QIR out.
     if fmt == QirFormat.TEXT:
         return module.ir()
     elif fmt == QirFormat.BITCODE:
